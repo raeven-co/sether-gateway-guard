@@ -1,0 +1,57 @@
+[project]
+name = "sether-gateway-guard"
+version = "0.1.0"
+description = "OpenAI-compatible LLM gateway guard: tokenizes PII with Sether before it reaches a model provider and gates tool calls on the tokens it issued."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Godfrey Lebo" }]
+# Direct dependencies, pinned exactly. requirements.lock pins the full tree.
+dependencies = [
+    "sether==0.2.0",
+    "fastapi==0.142.1",
+    "uvicorn==0.54.0",
+    "httpx==0.28.1",
+    "pydantic==2.13.5",
+    "pydantic-settings==2.15.0",
+    "pyyaml==6.0.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.1.1",
+    "mypy==2.3.1",
+    "ruff==0.16.9",
+    "types-PyYAML==6.0.12.20260906",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+mypy_path = "src"
+files = ["src", "tests"]
+plugins = ["pydantic.mypy"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "S", "SIM", "RUF", "N", "PT", "RET", "ARG"]
+
+[tool.ruff.lint.per-file-ignores]
+# S105 flags names containing "TOKEN"; here a token is a PII placeholder, not a credential.
+"src/sether_guard/contract.py" = ["S105"]
+"src/sether_guard/tokens.py" = ["S105"]
+"tests/**" = ["S101", "S105", "S106"]

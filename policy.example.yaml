@@ -1,0 +1,30 @@
+# Sether gateway guard policy.
+#
+# Default deny: a tool that is not listed here is never executed with model
+# arguments. Its call is replaced by a `needs_human_review` marker.
+#
+# restore_fields  Argument paths that may receive restored PII. Every other
+#                 field keeps the opaque token. `cc[]` means "each list item
+#                 of cc"; `customer.email` addresses a nested key.
+# token_fields    Argument paths that must hold exactly one token issued in
+#                 this run, of one of the listed types. A raw value, an
+#                 altered or foreign token, or a missing value blocks the call.
+#                 `sources` limits which message roles may have issued it:
+#                 [user] means "an address from a user message", never one
+#                 that first appeared in a tool result.
+version: 1
+tools:
+  send_email:
+    restore_fields: [to, "cc[]", subject, body]
+    token_fields:
+      to: { types: [EMAIL], required: true, sources: [user] }
+      "cc[]": { types: [EMAIL], required: false }
+
+  lookup_order:
+    # Receives tokens only. The order service never sees the customer's PII.
+    restore_fields: [order_id]
+
+  reschedule_delivery:
+    restore_fields: [contact_phone, note]
+    token_fields:
+      contact_phone: { types: [PHONE], required: true, sources: [user] }
