@@ -5,13 +5,15 @@ one strict JSON object, (3) every token-shaped string anywhere in it (keys
 included) is byte-identical to a token issued in this run, and (4) every
 policy ``token_fields`` entry holds exactly one issued token of an allowed
 type, issued from an allowed message role. Only then are ``restore_fields``
-restored, and the arguments are re-serialized, so the tool receives exactly the
-JSON the gate inspected.
+restored, with Sether's strict restore, and the arguments are re-serialized, so
+the tool receives exactly the JSON the gate inspected.
 """
 
 from collections import Counter
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
+
+from sether import UnresolvedTokenError, Vault, restore_sync
 
 from .contract import BlockReason
 from .jsonwalk import (
@@ -26,8 +28,6 @@ from .jsonwalk import (
 from .policy import GuardPolicy, TokenFieldRule, ToolPolicy
 from .schemas import FunctionCall
 from .tokens import TokenFinding, TokenIndex, TokenStatus, token_type_of
-
-type Restore = Callable[[str], str]
 
 _TOKEN_STATUS_REASONS = {
     TokenStatus.ALTERED: BlockReason.ALTERED_TOKEN,
@@ -59,10 +59,10 @@ class _Failure:
 
 
 class ToolGate:
-    def __init__(self, policy: GuardPolicy, tokens: TokenIndex, restore: Restore) -> None:
+    def __init__(self, policy: GuardPolicy, tokens: TokenIndex, vault: Vault) -> None:
         self._policy = policy
         self._tokens = tokens
-        self._restore = restore
+        self._vault = vault
 
     def evaluate(self, call: FunctionCall) -> GateDecision:
         tool_policy = self._policy.tools.get(call.name)
@@ -114,9 +114,13 @@ class ToolGate:
         token_types: dict[str, int],
     ) -> GateDecision:
         paths = tool_policy.restore_paths()
-        restored = map_string_values(
-            arguments, lambda path, value: self._restore(value) if path in paths else value
-        )
+        try:
+            restored = map_string_values(
+                arguments, lambda path, value: self._restore(value) if path in paths else value
+            )
+        except UnresolvedTokenError:
+            # Tokens were checked against a snapshot of the vault; one has expired since.
+            return _blocked(name, [_Failure(BlockReason.UNKNOWN_TOKEN)], token_types)
         fields_restored = sum(
             1 for s in sites if not s.is_key and s.path in paths and self._tokens.find(s.value)
         )
@@ -127,6 +131,15 @@ class ToolGate:
             token_types=token_types,
             fields_restored=fields_restored,
         )
+
+    def _restore(self, value: str) -> str:
+        """Restore one decoded string value; ``dumps_json`` then escapes the originals.
+
+        Sether's ``restore_json_value`` does the same for every value, but only policy
+        fields may be restored here. Strict, because the gate already requires every
+        token to be issued: one left unresolved must fail the call, not reach the tool.
+        """
+        return restore_sync(value, self._vault, strict=True)
 
 
 def review_arguments(decision: GateDecision) -> str:

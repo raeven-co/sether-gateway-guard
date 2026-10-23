@@ -2,7 +2,9 @@
 
 An OpenAI-compatible gateway hop that keeps PII away from model providers and
 refuses to run a tool call unless every token in it was issued in this run.
-Built on [Sether](https://pypi.org/project/sether/) 0.2.0.
+Built on [Sether](https://pypi.org/project/sether/). Requires `sether>=0.4.1,<0.5`:
+releases before 0.4.0 restore serialized JSON by splicing originals in unescaped, so an
+original such as `Alice", "bcc": "attacker@example.com` can add a key to a document.
 
 ## The problem
 
@@ -15,7 +17,10 @@ and a naive restore step then hands a tool the wrong recipient or a literal `<EM
 - **Outbound:** tokenizes every message (system, developer, user, assistant, tool),
   including text parts and the JSON arguments of assistant tool calls in history.
   The provider sees `<EMAIL_9f1c...>`, never `amara@example.com`.
-- **Inbound text:** restores tokens in assistant content.
+- **Inbound text:** restores tokens in assistant content. When the request sets
+  `response_format` to `json_object` or `json_schema`, the content is a JSON document:
+  it is restored value by value and re-serialized compactly, or left tokenized if it
+  does not parse (for example, output cut off at `max_tokens`).
 - **Inbound tool calls:** a gate decides per call. A call is restored only if every
   token-shaped string in it is byte-identical to a token issued in this run and the
   policy's required token fields are satisfied. Otherwise the call is replaced by a
@@ -64,7 +69,8 @@ A tool call is **allowed** only when all of these hold:
 
 Then only `restore_fields` are restored. Tokens elsewhere stay tokens. Arguments are
 re-serialized, so the tool receives exactly the JSON the gate inspected, with quotes
-and backslashes in restored values escaped.
+and backslashes in restored values escaped. The restore runs in Sether's strict mode:
+a token the vault can no longer resolve blocks the call instead of reaching the tool.
 
 A **blocked** call keeps its `id` and becomes:
 
@@ -88,7 +94,7 @@ treat it as a hard stop. The blocked arguments are deliberately not echoed back.
 | `tool_not_allowed` | Tool not in the policy. |
 | `invalid_arguments` | Not one strict JSON object. |
 | `altered_token` | Resembles an issued token (case, spacing, brackets dropped, type swapped, truncated, up to 3 substituted characters) but is not identical. |
-| `unknown_token` | Token-shaped, but never issued in this run (another run, another request, or invented). |
+| `unknown_token` | Token-shaped, but never issued in this run (another run, another request, or invented), or no longer in the vault at restore. |
 | `missing_required_token` | A required `token_fields` path is absent, null or empty. |
 | `value_not_issued_token` | A `token_fields` value is not exactly one issued token (a raw address, a padded token, a second address smuggled alongside). |
 | `token_type_not_allowed` | An issued token of the wrong type, for example a `PHONE` token in `send_email.to`. |
@@ -197,19 +203,24 @@ adapter around `start_as_current_span`. Attributes: `gen_ai.operation.name`,
 `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.input_tokens`,
 `gen_ai.usage.output_tokens`, and `sether_guard.*` counts and outcome.
 
-## What this adds on top of Sether 0.2.0
+## What this adds on top of Sether 0.4
 
-Verified against the published 0.2.0 wheel, which is identical to the `v0.2.0` tag:
+Verified against the published 0.4.1 wheel, which is identical to the `v0.4.1` tag:
 
-- Sether's restore silently leaves unknown tokens in place. Fine for display text,
-  unsafe for tool arguments. The gate makes every token-shaped string account for itself.
+- Sether's default restore silently leaves unknown tokens in place, and its strict mode
+  raises only on well-formed tokens it cannot resolve. Neither sees a token the model
+  mangled (brackets dropped, inner whitespace), checks which role issued a token, or
+  decides per tool call. The gate makes every token-shaped string account for itself,
+  then restores in strict mode as a second check.
 - Sether has no API that lists issued tokens. `RunVault` implements Sether's `Vault`
   protocol over `MemoryVault` and keeps a ledger of each token and the message role
   that issued it.
 - `MemoryVault` evicts the least recently used entry at 10,000 entries, which would turn
   a valid token into an unknown one mid-run. `RunVault` fails the request instead.
-- Sether's OpenAI and Anthropic wrappers handle plain text content only, not
-  `tool_calls[].function.arguments`. The guard handles both directions.
+- Sether's OpenAI and Anthropic wrappers redact text content only, not tool-call
+  arguments in history, and restore tool-call arguments only with the opt-in
+  `restore_tool_arguments=True`, which restores every value with no gate. The guard
+  tokenizes arguments outbound and gates every call inbound.
 - Sether exports `AuditEvent` and `AuditSink` types, but its redact and restore paths do
   not emit events. The guard has its own decision-level audit log.
 
@@ -227,7 +238,7 @@ Verified against the published 0.2.0 wheel, which is identical to the `v0.2.0` t
 - **Provenance is per message role.** If an application pastes retrieved documents into
   a user message, their addresses count as `user`. Keep untrusted content in `tool`
   messages for `sources` to mean anything.
-- **Tokens per occurrence.** Sether 0.2.0 issues a fresh token for every occurrence, so
+- **Tokens per occurrence.** Sether 0.4 issues a fresh token for every occurrence, so
   the same address gets different tokens across turns. The gate accepts any token issued
   in the run.
 - **Single process.** Runs and vaults live in memory. Multiple replicas need sticky
@@ -237,6 +248,8 @@ Verified against the published 0.2.0 wheel, which is identical to the `v0.2.0` t
   `user`, metadata and non-text parts (images, audio, files) pass through unchanged.
   Only `function` tool calls are supported. A legacy `function_call` response or an
   unparseable completion fails closed with 502.
+- **Nested JSON.** A restore field whose value is itself serialized JSON is restored as
+  text inside that string. Keep such fields out of `restore_fields`.
 - **Provider errors** are passed through tokenized, not restored.
 - **No caller authentication.** Deploy behind your gateway's auth. The `Authorization`
   header only scopes runs.

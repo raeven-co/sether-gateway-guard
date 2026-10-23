@@ -2,9 +2,11 @@
 
 from dataclasses import dataclass
 
+from sether import Vault, restore_json, restore_sync
+
 from .contract import REVIEW_TOOL_NAME
 from .errors import UpstreamContractError
-from .gate import GateDecision, Restore, ToolGate, review_arguments
+from .gate import GateDecision, ToolGate, review_arguments
 from .schemas import ChatCompletion, Choice, FunctionCall, ToolCall
 from .tokens import TokenIndex, TokenStatus
 
@@ -36,10 +38,13 @@ class _GuardedChoice:
 
 
 class InboundGuard:
-    def __init__(self, gate: ToolGate, tokens: TokenIndex, restore: Restore) -> None:
+    def __init__(
+        self, gate: ToolGate, tokens: TokenIndex, vault: Vault, *, json_content: bool
+    ) -> None:
         self._gate = gate
         self._tokens = tokens
-        self._restore = restore
+        self._vault = vault
+        self._json_content = json_content
 
     def guard(self, completion: ChatCompletion) -> GuardedCompletion:
         guarded = [self._guard_choice(choice) for choice in completion.choices]
@@ -58,9 +63,11 @@ class InboundGuard:
         restored = unresolved = 0
         if message.content is not None:
             findings = self._tokens.find(message.content)
-            restored = sum(1 for f in findings if f.status is TokenStatus.ISSUED)
+            content = self._restore_content(message.content)
+            if content is not None:
+                restored = sum(1 for f in findings if f.status is TokenStatus.ISSUED)
+                update["content"] = content
             unresolved = len(findings) - restored
-            update["content"] = self._restore(message.content)
         outcomes: list[ToolCallOutcome] = []
         if message.tool_calls is not None:
             outcomes = [
@@ -72,6 +79,20 @@ class InboundGuard:
             ]
         guarded_choice = choice.model_copy(update={"message": message.model_copy(update=update)})
         return _GuardedChoice(guarded_choice, tuple(outcomes), restored, unresolved)
+
+    def _restore_content(self, content: str) -> str | None:
+        """Restored content, or None when it must stay tokenized.
+
+        In JSON mode the content is a document, so it is restored value by value and an
+        original cannot add keys or break it. Content that does not parse (truncated
+        output, for example) stays tokenized rather than being restored as text.
+        """
+        if not self._json_content:
+            return restore_sync(content, self._vault)
+        try:
+            return restore_json(content, self._vault)
+        except (ValueError, RecursionError):
+            return None
 
 
 def _apply(call: ToolCall, decision: GateDecision) -> ToolCall:

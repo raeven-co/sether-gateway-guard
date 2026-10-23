@@ -1,5 +1,7 @@
 # Full dependency tree, exact versions. Generated with pip freeze from the project venv
-# (Python 3.12.14). Installed with: pip install --uploaded-prior-to 2026-09-30T00:00:00Z
+# (Python 3.12.14). Installed with: pip install --uploaded-prior-to 2026-09-30T00:00:00Z,
+# except sether==0.4.1 (uploaded 2026-10-18, a security fix; the wheel was checked to be
+# identical to the v0.4.1 tag).
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.15.1
@@ -28,7 +30,7 @@ pytest==9.1.1
 python-dotenv==1.2.3
 PyYAML==6.0.3
 ruff==0.16.9
-sether==0.2.0
+sether==0.4.1
 starlette==1.7.0
 types-PyYAML==6.0.12.20260906
 typing-inspection==0.4.4

@@ -164,12 +164,15 @@ class GuardHarness:
         run_id: str | None = None,
         authorization: str = CALLER_KEY,
         stream: bool = False,
+        response_format: Mapping[str, object] | None = None,
     ) -> httpx.Response:
-        payload = {
+        payload: dict[str, object] = {
             "model": "mock-model",
             "messages": [dict(m) for m in messages or [{"role": "user", "content": user}]],
             "stream": stream,
         }
+        if response_format is not None:
+            payload["response_format"] = dict(response_format)
         headers = {"authorization": authorization}
         if run_id is not None:
             headers["x-sether-run-id"] = run_id

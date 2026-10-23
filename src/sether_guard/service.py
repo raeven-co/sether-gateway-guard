@@ -101,8 +101,9 @@ class ChatGuard:
         issued = _counts_since(before, vault.issued_type_counts())
         completion = await self._upstream.create_chat_completion(outbound, authorization)
         tokens = TokenIndex(vault.issued_sources(), self._known_types)
-        gate = ToolGate(self._policy, tokens, sether.restore_sync)
-        return InboundGuard(gate, tokens, sether.restore_sync).guard(completion), issued
+        gate = ToolGate(self._policy, tokens, vault)
+        inbound = InboundGuard(gate, tokens, vault, json_content=request.wants_json_content)
+        return inbound.guard(completion), issued
 
     def _report(
         self,

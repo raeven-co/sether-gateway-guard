@@ -1,10 +1,12 @@
 """Find token-shaped strings in model output and classify them against a run.
 
-Sether 0.2.0 issues tokens shaped ``<TYPE_uuid4>`` and its restore step
-silently leaves any token it does not know. The gate needs the opposite: every
-token-shaped string must be accounted for. A "token-shaped" string here is
-anything Sether's restore grammar would recognise, widened to also catch the
-ways a model mangles tokens (changed case, inner whitespace, dropped brackets).
+Sether issues tokens shaped ``<TYPE_uuid4>``. Its default restore silently
+leaves any token it does not know, and its strict mode only sees well-formed
+tokens it cannot resolve. The gate needs more: every token-shaped string must
+be accounted for, and must have been issued in this run. A "token-shaped"
+string here is anything Sether's restore grammar would recognise, widened to
+also catch the ways a model mangles tokens (changed case, inner whitespace,
+dropped brackets).
 """
 
 import re
